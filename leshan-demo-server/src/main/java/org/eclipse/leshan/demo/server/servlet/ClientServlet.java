@@ -721,7 +721,7 @@ public class ClientServlet extends LeshanDemoServlet {
                 LwM2mResponse lwm2mResp = future.get();
                 if (LOG.isDebugEnabled()) {
                     LOG.debug("LwM2M request completed immediately - Endpoint: {}, Path: {}, Success: {}",
-                            destination.getEndpoint(), path, lwm2mResp.isSuccess());
+                            destination.getEndpoint(), path, lwm2mResp != null && lwm2mResp.isSuccess());
                 }
                 processDeviceResponse(httpReq, httpResp, lwm2mResp, timeout);
                 return future;
@@ -866,21 +866,28 @@ public class ClientServlet extends LeshanDemoServlet {
     }
 
     private long extractTimeout(HttpServletRequest req) {
-        // get content format
+        // First, get the default timeout for this request type (e.g., extended for firmware)
+        long defaultTimeout = getDefaultTimeoutForRequest(req);
+
+        // Check if there's an explicit timeout parameter from the request
         String timeoutParam = req.getParameter(TIMEOUT_PARAM);
         long timeout;
         if (timeoutParam != null) {
             try {
-                timeout = Long.parseLong(timeoutParam) * 1000;
+                long requestedTimeout = Long.parseLong(timeoutParam) * 1000;
+                // Use the maximum between requested timeout and default timeout
+                // This ensures firmware updates always get extended timeout even if frontend sends a small value
+                timeout = Math.max(requestedTimeout, defaultTimeout);
                 if (LOG.isDebugEnabled()) {
-                    LOG.debug("Using timeout from request parameter: {} ms ({} seconds)", timeout, timeout / 1000);
+                    LOG.debug("Using timeout from request parameter: {} ms ({} seconds), default: {} ms, final: {} ms",
+                            requestedTimeout, requestedTimeout / 1000, defaultTimeout, timeout);
                 }
             } catch (NumberFormatException e) {
                 LOG.warn("Invalid timeout parameter '{}', using default timeout", timeoutParam);
-                timeout = getDefaultTimeoutForRequest(req);
+                timeout = defaultTimeout;
             }
         } else {
-            timeout = getDefaultTimeoutForRequest(req);
+            timeout = defaultTimeout;
         }
         return timeout;
     }
