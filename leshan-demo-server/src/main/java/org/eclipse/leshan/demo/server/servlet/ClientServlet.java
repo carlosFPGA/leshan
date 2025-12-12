@@ -362,7 +362,8 @@ public class ClientServlet extends LeshanDemoServlet {
                 // Extract timeout before creating request to log it
                 long timeout = extractTimeout(req);
                 if (LOG.isInfoEnabled()) {
-                    LOG.info("Write request initiated - Path: {}, Endpoint: {}, ContentFormat: {}, Replace: {}, Timeout: {} ms ({} seconds)",
+                    LOG.info(
+                            "Write request initiated - Path: {}, Endpoint: {}, ContentFormat: {}, Replace: {}, Timeout: {} ms ({} seconds)",
                             lwm2mPath, registration.getEndpoint(), contentFormat, replace, timeout, timeout / 1000);
                 }
 
@@ -375,8 +376,8 @@ public class ClientServlet extends LeshanDemoServlet {
                     if (resource.getType() == ResourceModel.Type.OPAQUE) {
                         byte[] value = (byte[]) resource.getValue();
                         if (value != null) {
-                            LOG.info("Firmware package size: {} bytes ({} KB, {} MB)",
-                                    value.length, value.length / 1024, value.length / (1024 * 1024));
+                            LOG.info("Firmware package size: {} bytes ({} KB, {} MB)", value.length,
+                                    value.length / 1024, value.length / (1024 * 1024));
                         }
                     }
                 }
@@ -727,7 +728,8 @@ public class ClientServlet extends LeshanDemoServlet {
             } catch (ExecutionException e) {
                 Throwable cause = e.getCause();
                 LOG.error("LwM2M request failed immediately - Endpoint: {}, Path: {}, Error: {}",
-                        destination.getEndpoint(), path, cause != null ? cause.getMessage() : e.getMessage(), cause != null ? cause : e);
+                        destination.getEndpoint(), path, cause != null ? cause.getMessage() : e.getMessage(),
+                        cause != null ? cause : e);
                 if (cause instanceof RuntimeException) {
                     throw (RuntimeException) cause;
                 } else {
@@ -750,7 +752,8 @@ public class ClientServlet extends LeshanDemoServlet {
         future.thenApply(lwm2mResp -> {
             try {
                 if (logDebug) {
-                    LOG.debug("LwM2M asynchronous response received - Endpoint: {}, Path: {}, RequestId: {}, Success: {}",
+                    LOG.debug(
+                            "LwM2M asynchronous response received - Endpoint: {}, Path: {}, RequestId: {}, Success: {}",
                             endpoint, requestPath, requestId, lwm2mResp != null && lwm2mResp.isSuccess());
                 }
                 // when response will be received, send a event with the response
@@ -762,19 +765,18 @@ public class ClientServlet extends LeshanDemoServlet {
                 responseDelayed.response = lwm2mResp;
                 responseDelayed.requestId = requestId;
                 responseDelayed.delayed = true;
-                eventServlet.sendEvent("REQUEST_RESPONSE", this.mapper.writeValueAsString(responseDelayed),
-                        endpoint);
+                eventServlet.sendEvent("REQUEST_RESPONSE", this.mapper.writeValueAsString(responseDelayed), endpoint);
             } catch (JsonProcessingException e) {
-                LOG.error("Error serializing delayed response - Endpoint: {}, Path: {}, RequestId: {}",
-                        endpoint, requestPath, requestId, e);
+                LOG.error("Error serializing delayed response - Endpoint: {}, Path: {}, RequestId: {}", endpoint,
+                        requestPath, requestId, e);
                 throw new IllegalStateException(e);
             }
             return lwm2mResp;
         });
 
         future.exceptionally(throwable -> {
-            LOG.error("LwM2M asynchronous request failed - Endpoint: {}, Path: {}, RequestId: {}, Error: {}",
-                    endpoint, requestPath, requestId, throwable != null ? throwable.getMessage() : "Unknown error", throwable);
+            LOG.error("LwM2M asynchronous request failed - Endpoint: {}, Path: {}, RequestId: {}, Error: {}", endpoint,
+                    requestPath, requestId, throwable != null ? throwable.getMessage() : "Unknown error", throwable);
             return null;
         });
 
@@ -812,8 +814,9 @@ public class ClientServlet extends LeshanDemoServlet {
         if (lwm2mResp == null) {
             String path = httpReq.getPathInfo();
             String method = httpReq.getMethod();
-            LOG.warn("Request timed out - Method: {}, Path: {}, Timeout: {} ms ({} seconds). " +
-                    "This may indicate the operation took longer than the configured timeout.",
+            LOG.warn(
+                    "Request timed out - Method: {}, Path: {}, Timeout: {} ms ({} seconds). "
+                            + "This may indicate the operation took longer than the configured timeout.",
                     method, path, timeout, timeout / 1000);
             httpResp.setStatus(HttpServletResponse.SC_GATEWAY_TIMEOUT);
             httpResp.getWriter().append("Request timeout").flush();
