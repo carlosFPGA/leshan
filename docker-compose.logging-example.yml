@@ -31,7 +31,7 @@ services:
     environment:
       - LESHAN_BSS_WEB_PORT=8080
       # REEMPLAZA CON TU IP ELASTICA
-      - LESHAN_BSS_SERVER_URL=coap://3.224.187.235:5683
+      - LESHAN_BSS_SERVER_URL=coap://192.168.1.20:5683
 
   nginx_proxy:
     image: nginx:alpine

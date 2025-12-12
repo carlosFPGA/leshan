@@ -17,10 +17,10 @@ Esta guía explica cómo controlar el nivel de logging del servidor Leshan cuand
 1. Copia el archivo de configuración que necesites al servidor:
    ```bash
    # Para producción (mínimo logging)
-   scp leshan-demo-server/logback-config-production.xml ubuntu@ip-172-31-75-42:~/iot-thesis/
+   scp leshan-demo-server/logback-config-production.xml ubuntu@192.168.1.20:~/iot-thesis/
    
    # Para debug (logging completo)
-   scp leshan-demo-server/logback-config-debug.xml ubuntu@ip-172-31-75-42:~/iot-thesis/
+   scp leshan-demo-server/logback-config-debug.xml ubuntu@192.168.1.20:~/iot-thesis/
    ```
 
 2. **Solo modifica tu `docker-compose.yml`** (NO necesitas cambiar Dockerfile.server):
@@ -63,7 +63,7 @@ Esta guía explica cómo controlar el nivel de logging del servidor Leshan cuand
 1. Usa el Dockerfile mejorado (`Dockerfile.server.logging`):
    ```bash
    # Copia el Dockerfile mejorado
-   scp Dockerfile.server.logging ubuntu@ip-172-31-75-42:~/iot-thesis/Dockerfile.server
+   scp Dockerfile.server.logging ubuntu@192.168.1.20:~/iot-thesis/Dockerfile.server
    ```
 
 2. Modifica tu `docker-compose.yml`:

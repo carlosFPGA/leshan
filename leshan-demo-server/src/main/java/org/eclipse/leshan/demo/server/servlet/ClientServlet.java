@@ -362,25 +362,25 @@ public class ClientServlet extends LeshanDemoServlet {
                 // Extract timeout before creating request to log it
                 long timeout = extractTimeout(req);
                 if (LOG.isInfoEnabled()) {
-                    LOG.info("Write request initiated - Path: {}, Endpoint: {}, ContentFormat: {}, Replace: {}, Timeout: {} ms ({} seconds)", 
+                    LOG.info("Write request initiated - Path: {}, Endpoint: {}, ContentFormat: {}, Replace: {}, Timeout: {} ms ({} seconds)",
                             lwm2mPath, registration.getEndpoint(), contentFormat, replace, timeout, timeout / 1000);
                 }
 
                 // create & process request
                 LwM2mNode node = extractLwM2mNode(lwm2mPath, req);
-                
+
                 // Log payload size if it's a resource with opaque data (like firmware) - only if INFO is enabled
                 if (LOG.isInfoEnabled() && node instanceof LwM2mSingleResource) {
                     LwM2mSingleResource resource = (LwM2mSingleResource) node;
                     if (resource.getType() == ResourceModel.Type.OPAQUE) {
                         byte[] value = (byte[]) resource.getValue();
                         if (value != null) {
-                            LOG.info("Firmware package size: {} bytes ({} KB, {} MB)", 
+                            LOG.info("Firmware package size: {} bytes ({} KB, {} MB)",
                                     value.length, value.length / 1024, value.length / (1024 * 1024));
                         }
                     }
                 }
-                
+
                 WriteRequest request = new WriteRequest(replace ? Mode.REPLACE : Mode.UPDATE, contentFormat, lwm2mPath,
                         node);
                 sendRequestAndWriteResponse(registration, request, req, resp);
@@ -707,7 +707,7 @@ public class ClientServlet extends LeshanDemoServlet {
         long timeout = extractTimeout(httpReq);
         String path = httpReq.getPathInfo();
         if (LOG.isDebugEnabled()) {
-            LOG.debug("Sending LwM2M request - Endpoint: {}, Path: {}, RequestType: {}, Timeout: {} ms", 
+            LOG.debug("Sending LwM2M request - Endpoint: {}, Path: {}, RequestType: {}, Timeout: {} ms",
                     destination.getEndpoint(), path, lwm2mReq.getClass().getSimpleName(), timeout);
         }
 
@@ -719,14 +719,14 @@ public class ClientServlet extends LeshanDemoServlet {
             try {
                 LwM2mResponse lwm2mResp = future.get();
                 if (LOG.isDebugEnabled()) {
-                    LOG.debug("LwM2M request completed immediately - Endpoint: {}, Path: {}, Success: {}", 
+                    LOG.debug("LwM2M request completed immediately - Endpoint: {}, Path: {}, Success: {}",
                             destination.getEndpoint(), path, lwm2mResp.isSuccess());
                 }
                 processDeviceResponse(httpReq, httpResp, lwm2mResp, timeout);
                 return future;
             } catch (ExecutionException e) {
                 Throwable cause = e.getCause();
-                LOG.error("LwM2M request failed immediately - Endpoint: {}, Path: {}, Error: {}", 
+                LOG.error("LwM2M request failed immediately - Endpoint: {}, Path: {}, Error: {}",
                         destination.getEndpoint(), path, cause != null ? cause.getMessage() : e.getMessage(), cause != null ? cause : e);
                 if (cause instanceof RuntimeException) {
                     throw (RuntimeException) cause;
@@ -736,9 +736,9 @@ public class ClientServlet extends LeshanDemoServlet {
                 }
             }
         }
-        
+
         if (LOG.isDebugEnabled()) {
-            LOG.debug("LwM2M request is asynchronous (will complete later) - Endpoint: {}, Path: {}, Timeout: {} ms", 
+            LOG.debug("LwM2M request is asynchronous (will complete later) - Endpoint: {}, Path: {}, Timeout: {} ms",
                     destination.getEndpoint(), path, timeout);
         }
 
@@ -750,7 +750,7 @@ public class ClientServlet extends LeshanDemoServlet {
         future.thenApply(lwm2mResp -> {
             try {
                 if (logDebug) {
-                    LOG.debug("LwM2M asynchronous response received - Endpoint: {}, Path: {}, RequestId: {}, Success: {}", 
+                    LOG.debug("LwM2M asynchronous response received - Endpoint: {}, Path: {}, RequestId: {}, Success: {}",
                             endpoint, requestPath, requestId, lwm2mResp != null && lwm2mResp.isSuccess());
                 }
                 // when response will be received, send a event with the response
@@ -765,15 +765,15 @@ public class ClientServlet extends LeshanDemoServlet {
                 eventServlet.sendEvent("REQUEST_RESPONSE", this.mapper.writeValueAsString(responseDelayed),
                         endpoint);
             } catch (JsonProcessingException e) {
-                LOG.error("Error serializing delayed response - Endpoint: {}, Path: {}, RequestId: {}", 
+                LOG.error("Error serializing delayed response - Endpoint: {}, Path: {}, RequestId: {}",
                         endpoint, requestPath, requestId, e);
                 throw new IllegalStateException(e);
             }
             return lwm2mResp;
         });
-        
+
         future.exceptionally(throwable -> {
-            LOG.error("LwM2M asynchronous request failed - Endpoint: {}, Path: {}, RequestId: {}, Error: {}", 
+            LOG.error("LwM2M asynchronous request failed - Endpoint: {}, Path: {}, RequestId: {}, Error: {}",
                     endpoint, requestPath, requestId, throwable != null ? throwable.getMessage() : "Unknown error", throwable);
             return null;
         });
@@ -813,7 +813,7 @@ public class ClientServlet extends LeshanDemoServlet {
             String path = httpReq.getPathInfo();
             String method = httpReq.getMethod();
             LOG.warn("Request timed out - Method: {}, Path: {}, Timeout: {} ms ({} seconds). " +
-                    "This may indicate the operation took longer than the configured timeout.", 
+                    "This may indicate the operation took longer than the configured timeout.",
                     method, path, timeout, timeout / 1000);
             httpResp.setStatus(HttpServletResponse.SC_GATEWAY_TIMEOUT);
             httpResp.getWriter().append("Request timeout").flush();
@@ -822,14 +822,14 @@ public class ClientServlet extends LeshanDemoServlet {
             if (LOG.isDebugEnabled()) {
                 String path = httpReq.getPathInfo();
                 String method = httpReq.getMethod();
-                LOG.debug("Request completed successfully - Method: {}, Path: {}, ResponseCode: {}, Success: {}", 
+                LOG.debug("Request completed successfully - Method: {}, Path: {}, ResponseCode: {}, Success: {}",
                         method, path, lwm2mResp.getCode(), lwm2mResp.isSuccess());
             }
             // Always log errors/warnings
             if (!lwm2mResp.isSuccess()) {
                 String path = httpReq.getPathInfo();
                 String method = httpReq.getMethod();
-                LOG.warn("Request completed with error - Method: {}, Path: {}, ResponseCode: {}, ErrorMessage: {}", 
+                LOG.warn("Request completed with error - Method: {}, Path: {}, ResponseCode: {}, ErrorMessage: {}",
                         method, path, lwm2mResp.getCode(), lwm2mResp.getErrorMessage());
             }
             String response = this.mapper.writeValueAsString(lwm2mResp);
@@ -895,7 +895,7 @@ public class ClientServlet extends LeshanDemoServlet {
                 try {
                     int objectId = Integer.parseInt(pathSegments[1]);
                     if (objectId == 5) {
-                        LOG.info("Firmware update detected for path {} - using extended timeout of {} ms ({} minutes)", 
+                        LOG.info("Firmware update detected for path {} - using extended timeout of {} ms ({} minutes)",
                                 pathInfo, FIRMWARE_WRITE_TIMEOUT, FIRMWARE_WRITE_TIMEOUT / 60000);
                         return FIRMWARE_WRITE_TIMEOUT;
                     }
