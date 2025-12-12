@@ -886,12 +886,23 @@ public class ClientServlet extends LeshanDemoServlet {
         // Check if this is a write request to firmware object (object 5)
         String pathInfo = req.getPathInfo();
         if (pathInfo != null && "PUT".equals(req.getMethod())) {
-            // Check if path contains /5/ or ends with /5 which indicates firmware object
-            // Path format: /clients/{endpoint}/5/0/0 or /5/0/0
-            if (pathInfo.contains("/5/") || pathInfo.endsWith("/5")) {
-                LOG.info("Firmware update detected for path {} - using extended timeout of {} ms ({} minutes)", 
-                        pathInfo, FIRMWARE_WRITE_TIMEOUT, FIRMWARE_WRITE_TIMEOUT / 60000);
-                return FIRMWARE_WRITE_TIMEOUT;
+            // Parse path to extract object ID
+            // Path format: /{endpoint}/{objectId}/{instanceId}/{resourceId}
+            // We need to verify that objectId (the first path segment after endpoint) is exactly 5
+            String[] pathSegments = StringUtils.split(pathInfo, '/');
+            if (pathSegments != null && pathSegments.length >= 2) {
+                // pathSegments[0] is the endpoint, pathSegments[1] is the objectId
+                try {
+                    int objectId = Integer.parseInt(pathSegments[1]);
+                    if (objectId == 5) {
+                        LOG.info("Firmware update detected for path {} - using extended timeout of {} ms ({} minutes)", 
+                                pathInfo, FIRMWARE_WRITE_TIMEOUT, FIRMWARE_WRITE_TIMEOUT / 60000);
+                        return FIRMWARE_WRITE_TIMEOUT;
+                    }
+                } catch (NumberFormatException e) {
+                    // If objectId is not a number (e.g., "composite"), ignore and use default timeout
+                    // This is expected for composite operations
+                }
             }
         }
         return DEFAULT_TIMEOUT;
