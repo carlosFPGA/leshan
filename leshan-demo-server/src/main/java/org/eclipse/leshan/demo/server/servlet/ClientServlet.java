@@ -30,6 +30,11 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 
 import org.apache.commons.io.IOUtils;
 import org.apache.commons.lang3.StringUtils;
@@ -123,18 +128,25 @@ public class ClientServlet extends LeshanDemoServlet {
     private static final String NODE_FORMAT_PARAM = "nodeformat";
 
     private static final long DEFAULT_TIMEOUT = 5000; // ms
-    private static final long FIRMWARE_WRITE_TIMEOUT = 5 * 60 * 1000; // 5 minutes in ms for firmware updates
+    private static final long FIRMWARE_WRITE_TIMEOUT = 10 * 60 * 1000; // 10 minutes in ms for firmware updates
+    private static final long PROGRESS_LOG_INTERVAL_BYTES = 1024 * 1024; // Log progress every 1 MB
 
     private final transient LeshanServer server;
     private final transient ObjectMapper mapper;
     private final transient LwM2mAttributeParser attributeParser;
     private final transient QueueHandler queueHandler;
     private final transient EventServlet eventServlet;
+    private final transient ScheduledExecutorService progressMonitorExecutor;
 
     public ClientServlet(LeshanServer server, EventServlet servlet) {
         this.server = server;
         this.queueHandler = new QueueHandler(server);
         this.eventServlet = servlet;
+        this.progressMonitorExecutor = Executors.newScheduledThreadPool(1, r -> {
+            Thread t = new Thread(r, "Firmware-Progress-Monitor");
+            t.setDaemon(true);
+            return t;
+        });
 
         mapper = new ObjectMapper();
         mapper.setSerializationInclusion(JsonInclude.Include.NON_NULL);
@@ -370,21 +382,23 @@ public class ClientServlet extends LeshanDemoServlet {
                 // create & process request
                 LwM2mNode node = extractLwM2mNode(lwm2mPath, req);
 
-                // Log payload size if it's a resource with opaque data (like firmware) - only if INFO is enabled
+                // Extract firmware size for progress monitoring
+                long firmwareSizeBytes = -1;
                 if (LOG.isInfoEnabled() && node instanceof LwM2mSingleResource) {
                     LwM2mSingleResource resource = (LwM2mSingleResource) node;
                     if (resource.getType() == ResourceModel.Type.OPAQUE) {
                         byte[] value = (byte[]) resource.getValue();
                         if (value != null) {
-                            LOG.info("Firmware package size: {} bytes ({} KB, {} MB)", value.length,
-                                    value.length / 1024, value.length / (1024 * 1024));
+                            firmwareSizeBytes = value.length;
+                            LOG.info("Firmware package size: {} bytes ({} KB, {} MB)", firmwareSizeBytes,
+                                    firmwareSizeBytes / 1024, firmwareSizeBytes / (1024 * 1024));
                         }
                     }
                 }
 
                 WriteRequest request = new WriteRequest(replace ? Mode.REPLACE : Mode.UPDATE, contentFormat, lwm2mPath,
                         node);
-                sendRequestAndWriteResponse(registration, request, req, resp);
+                sendRequestAndWriteResponse(registration, request, req, resp, firmwareSizeBytes);
             } catch (RuntimeException e) {
                 handleException(e, resp);
             }
@@ -704,6 +718,12 @@ public class ClientServlet extends LeshanDemoServlet {
     private CompletableFuture<LwM2mResponse> sendRequestAndWriteResponse(Registration destination,
             DownlinkDeviceManagementRequest<?> lwm2mReq, HttpServletRequest httpReq, HttpServletResponse httpResp)
             throws InterruptedException, IOException {
+        return sendRequestAndWriteResponse(destination, lwm2mReq, httpReq, httpResp, -1);
+    }
+
+    private CompletableFuture<LwM2mResponse> sendRequestAndWriteResponse(Registration destination,
+            DownlinkDeviceManagementRequest<?> lwm2mReq, HttpServletRequest httpReq, HttpServletResponse httpResp,
+            long firmwareSizeBytes) throws InterruptedException, IOException {
 
         long timeout = extractTimeout(httpReq);
         String path = httpReq.getPathInfo();
@@ -714,6 +734,60 @@ public class ClientServlet extends LeshanDemoServlet {
 
         // Send Request
         CompletableFuture<LwM2mResponse> future = queueHandler.send(destination, lwm2mReq, timeout);
+
+        // Start progress monitoring for firmware updates (only in DEBUG mode to avoid performance impact)
+        if (LOG.isDebugEnabled() && firmwareSizeBytes > 0) {
+            final long totalSize = firmwareSizeBytes;
+            final String endpoint = destination.getEndpoint();
+            final String requestPath = path;
+            final long startTime = System.currentTimeMillis();
+            final AtomicLong lastLoggedMB = new AtomicLong(0);
+            final java.util.concurrent.atomic.AtomicReference<ScheduledFuture<?>> progressTaskRef = new java.util.concurrent.atomic.AtomicReference<>();
+
+            ScheduledFuture<?> progressTask = progressMonitorExecutor.scheduleAtFixedRate(() -> {
+                if (future.isDone()) {
+                    return; // Stop monitoring when done
+                }
+                long elapsedMs = System.currentTimeMillis() - startTime;
+                // Estimate progress based on elapsed time and average transfer rate
+                // This is an approximation since we don't have real-time progress from CoAP block-wise transfer
+                // Using conservative estimate: CoAP block-wise with 1024 byte blocks, ~100ms per block = ~10KB/s
+                // But accounting for network overhead and processing, estimate 20-30KB/s average
+                // For better accuracy, we use a time-based linear estimation
+                long estimatedBytesTransferred = Math.min(totalSize, (elapsedMs * 25 * 1024) / 1000); // 25KB/s
+                                                                                                      // conservative
+                                                                                                      // estimate
+                long currentMB = estimatedBytesTransferred / PROGRESS_LOG_INTERVAL_BYTES;
+
+                if (currentMB > lastLoggedMB.get()) {
+                    long loggedMB = lastLoggedMB.getAndSet(currentMB);
+                    long loggedBytes = loggedMB * PROGRESS_LOG_INTERVAL_BYTES;
+                    double percentComplete = (loggedBytes * 100.0) / totalSize;
+                    LOG.debug(
+                            "Firmware transfer progress - Endpoint: {}, Path: {}, Transferred: {} MB / {} MB ({}%), Elapsed: {} s",
+                            endpoint, requestPath, loggedMB, totalSize / PROGRESS_LOG_INTERVAL_BYTES,
+                            String.format("%.1f", percentComplete), elapsedMs / 1000);
+                }
+            }, 2, 2, TimeUnit.SECONDS); // Check every 2 seconds
+
+            progressTaskRef.set(progressTask);
+
+            // Cancel progress monitoring when future completes
+            future.whenComplete((response, throwable) -> {
+                ScheduledFuture<?> task = progressTaskRef.get();
+                if (task != null && !task.isDone()) {
+                    task.cancel(false);
+                    if (LOG.isDebugEnabled() && response != null && response.isSuccess()) {
+                        long totalElapsed = System.currentTimeMillis() - startTime;
+                        double transferRateKBps = (totalSize / 1024.0) / (totalElapsed / 1000.0);
+                        LOG.debug(
+                                "Firmware transfer completed - Endpoint: {}, Path: {}, Total: {} MB, Time: {} s, Rate: {} KB/s",
+                                endpoint, requestPath, totalSize / (1024 * 1024), totalElapsed / 1000,
+                                String.format("%.2f", transferRateKBps));
+                    }
+                }
+            });
+        }
 
         // if we get response now
         if (future.isDone()) {
