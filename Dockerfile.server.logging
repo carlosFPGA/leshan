@@ -1,0 +1,16 @@
+# Dockerfile mejorado con soporte para configuración de logging
+FROM eclipse-temurin:17-jre-alpine
+WORKDIR /opt/leshan
+
+# Copiamos el JAR
+COPY server.jar .
+
+# Copiamos archivos de configuración de logging (opcional, se puede montar como volumen)
+# Si no se monta un volumen, se usará el logback-config.xml por defecto del JAR
+COPY logback-config-production.xml logback-config.xml
+
+EXPOSE 5683/udp 5684/udp 8080
+
+# Permite sobrescribir el comando con variables de entorno
+ENTRYPOINT ["sh", "-c", "java ${JAVA_OPTS} -jar ./server.jar"]
+

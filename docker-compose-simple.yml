@@ -1,0 +1,44 @@
+# SOLO MODIFICA docker-compose.yml - NO necesitas cambiar el Dockerfile
+# El volumen montado sobrescribirá cualquier archivo que esté en el contenedor
+
+services:
+  leshan_server:
+    build:
+      context: .
+      dockerfile: Dockerfile.server  # <-- Usa tu Dockerfile original
+    container_name: leshan_app
+    restart: always
+    ports:
+      - "5683:5683/udp"
+    volumes:
+      # Monta el archivo de configuración - esto sobrescribe cualquier archivo en el contenedor
+      - ./logback-config-production.xml:/opt/leshan/logback-config.xml:ro
+    environment:
+      # Indica a Java dónde encontrar el archivo
+      - JAVA_OPTS=-Dlogback.configurationFile=/opt/leshan/logback-config.xml
+      
+  leshan_bss:
+    build:
+      context: .
+      dockerfile: Dockerfile.bss
+    container_name: leshan_bss
+    restart: always
+    ports:
+      - "5783:5683/udp"
+    environment:
+      - LESHAN_BSS_WEB_PORT=8080
+      - LESHAN_BSS_SERVER_URL=coap://3.224.187.235:5683
+
+  nginx_proxy:
+    image: nginx:alpine
+    container_name: nginx_auth
+    restart: always
+    ports:
+      - "8080:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./.htpasswd:/etc/nginx/.htpasswd:ro
+    depends_on:
+      - leshan_server
+      - leshan_bss
+

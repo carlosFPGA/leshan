@@ -1,0 +1,48 @@
+# Ejemplo de docker-compose con control de logging
+# Copia este contenido a tu docker-compose.yml o úsalo como referencia
+
+services:
+  leshan_server:
+    build:
+      context: .
+      dockerfile: Dockerfile.server
+    container_name: leshan_app
+    restart: always
+    ports:
+      - "5683:5683/udp"
+    # OPCIÓN 1: Usar archivo de configuración personalizado (montado como volumen)
+    volumes:
+      - ./logback-config-production.xml:/opt/leshan/logback-config.xml:ro
+    # OPCIÓN 2: Usar variable de entorno para especificar el archivo de logback
+    environment:
+      - JAVA_OPTS=-Dlogback.configurationFile=/opt/leshan/logback-config.xml
+    # OPCIÓN 3: Cambiar nivel de logging directamente con argumentos JVM
+    # Descomenta la siguiente línea y comenta las opciones 1 y 2 para usar esta:
+    # command: ["java", "-Dlogback.configurationFile=/opt/leshan/logback-config.xml", "-jar", "./server.jar"]
+      
+  leshan_bss:
+    build:
+      context: .
+      dockerfile: Dockerfile.bss
+    container_name: leshan_bss
+    restart: always
+    ports:
+      - "5783:5683/udp"
+    environment:
+      - LESHAN_BSS_WEB_PORT=8080
+      # REEMPLAZA CON TU IP ELASTICA
+      - LESHAN_BSS_SERVER_URL=coap://3.224.187.235:5683
+
+  nginx_proxy:
+    image: nginx:alpine
+    container_name: nginx_auth
+    restart: always
+    ports:
+      - "8080:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./.htpasswd:/etc/nginx/.htpasswd:ro
+    depends_on:
+      - leshan_server
+      - leshan_bss
+

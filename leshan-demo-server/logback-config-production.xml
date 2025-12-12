@@ -14,6 +14,10 @@ and the Eclipse Distribution License is available at
 Contributors:
     Sierra Wireless - initial API and implementation
  -->
+<!-- 
+Production configuration: Minimal logging for performance measurements
+Only WARN and ERROR logs are shown to minimize performance impact
+-->
 <configuration>
 	<appender name="TERMINAL" class="org.eclipse.leshan.demo.cli.interactive.TerminalAppender">
 		<encoder class="ch.qos.logback.core.encoder.LayoutWrappingEncoder">
@@ -27,9 +31,12 @@ Contributors:
 		<appender-ref ref="TERMINAL" />
 	</root>
 	
-	<logger name="org.eclipse.leshan" level="INFO"/>
-	<logger name="org.eclipse.leshan.demo.server.servlet.ClientServlet" level="INFO"/>
-	<logger name="org.eclipse.leshan.transport.californium.LwM2mCoapResource" level="DEBUG"/>
-	<logger name="org.eclipse.leshan.server.security.SecurityCheck" level="DEBUG"/>
-	<logger name="org.eclipse.leshan.core.model.LwM2mModelRepository" level="TRACE"/>
+	<!-- Only essential loggers for production/performance testing -->
+	<logger name="org.eclipse.leshan" level="WARN"/>
+	<!-- ClientServlet: Only WARN/ERROR for performance measurements -->
+	<logger name="org.eclipse.leshan.demo.server.servlet.ClientServlet" level="WARN"/>
+	<logger name="org.eclipse.leshan.transport.californium.LwM2mCoapResource" level="WARN"/>
+	<logger name="org.eclipse.leshan.server.security.SecurityCheck" level="WARN"/>
+	<logger name="org.eclipse.leshan.core.model.LwM2mModelRepository" level="WARN"/>
 </configuration>
+

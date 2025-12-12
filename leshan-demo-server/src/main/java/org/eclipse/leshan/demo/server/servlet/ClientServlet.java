@@ -39,6 +39,7 @@ import org.eclipse.leshan.core.link.attributes.InvalidAttributeException;
 import org.eclipse.leshan.core.link.lwm2m.attributes.DefaultLwM2mAttributeParser;
 import org.eclipse.leshan.core.link.lwm2m.attributes.LwM2mAttributeParser;
 import org.eclipse.leshan.core.link.lwm2m.attributes.LwM2mAttributeSet;
+import org.eclipse.leshan.core.model.ResourceModel;
 import org.eclipse.leshan.core.node.LwM2mChildNode;
 import org.eclipse.leshan.core.node.LwM2mNode;
 import org.eclipse.leshan.core.node.LwM2mObjectInstance;
@@ -122,6 +123,7 @@ public class ClientServlet extends LeshanDemoServlet {
     private static final String NODE_FORMAT_PARAM = "nodeformat";
 
     private static final long DEFAULT_TIMEOUT = 5000; // ms
+    private static final long FIRMWARE_WRITE_TIMEOUT = 5 * 60 * 1000; // 5 minutes in ms for firmware updates
 
     private final transient LeshanServer server;
     private final transient ObjectMapper mapper;
@@ -357,8 +359,28 @@ public class ClientServlet extends LeshanDemoServlet {
                 if (replaceParam != null)
                     replace = Boolean.valueOf(replaceParam);
 
+                // Extract timeout before creating request to log it
+                long timeout = extractTimeout(req);
+                if (LOG.isInfoEnabled()) {
+                    LOG.info("Write request initiated - Path: {}, Endpoint: {}, ContentFormat: {}, Replace: {}, Timeout: {} ms ({} seconds)", 
+                            lwm2mPath, registration.getEndpoint(), contentFormat, replace, timeout, timeout / 1000);
+                }
+
                 // create & process request
                 LwM2mNode node = extractLwM2mNode(lwm2mPath, req);
+                
+                // Log payload size if it's a resource with opaque data (like firmware) - only if INFO is enabled
+                if (LOG.isInfoEnabled() && node instanceof LwM2mSingleResource) {
+                    LwM2mSingleResource resource = (LwM2mSingleResource) node;
+                    if (resource.getType() == ResourceModel.Type.OPAQUE) {
+                        byte[] value = (byte[]) resource.getValue();
+                        if (value != null) {
+                            LOG.info("Firmware package size: {} bytes ({} KB, {} MB)", 
+                                    value.length, value.length / 1024, value.length / (1024 * 1024));
+                        }
+                    }
+                }
+                
                 WriteRequest request = new WriteRequest(replace ? Mode.REPLACE : Mode.UPDATE, contentFormat, lwm2mPath,
                         node);
                 sendRequestAndWriteResponse(registration, request, req, resp);
@@ -682,17 +704,30 @@ public class ClientServlet extends LeshanDemoServlet {
             DownlinkDeviceManagementRequest<?> lwm2mReq, HttpServletRequest httpReq, HttpServletResponse httpResp)
             throws InterruptedException, IOException {
 
+        long timeout = extractTimeout(httpReq);
+        String path = httpReq.getPathInfo();
+        if (LOG.isDebugEnabled()) {
+            LOG.debug("Sending LwM2M request - Endpoint: {}, Path: {}, RequestType: {}, Timeout: {} ms", 
+                    destination.getEndpoint(), path, lwm2mReq.getClass().getSimpleName(), timeout);
+        }
+
         // Send Request
-        CompletableFuture<LwM2mResponse> future = queueHandler.send(destination, lwm2mReq, extractTimeout(httpReq));
+        CompletableFuture<LwM2mResponse> future = queueHandler.send(destination, lwm2mReq, timeout);
 
         // if we get response now
         if (future.isDone()) {
             try {
                 LwM2mResponse lwm2mResp = future.get();
-                processDeviceResponse(httpReq, httpResp, lwm2mResp);
+                if (LOG.isDebugEnabled()) {
+                    LOG.debug("LwM2M request completed immediately - Endpoint: {}, Path: {}, Success: {}", 
+                            destination.getEndpoint(), path, lwm2mResp.isSuccess());
+                }
+                processDeviceResponse(httpReq, httpResp, lwm2mResp, timeout);
                 return future;
             } catch (ExecutionException e) {
                 Throwable cause = e.getCause();
+                LOG.error("LwM2M request failed immediately - Endpoint: {}, Path: {}, Error: {}", 
+                        destination.getEndpoint(), path, cause != null ? cause.getMessage() : e.getMessage(), cause != null ? cause : e);
                 if (cause instanceof RuntimeException) {
                     throw (RuntimeException) cause;
                 } else {
@@ -701,14 +736,26 @@ public class ClientServlet extends LeshanDemoServlet {
                 }
             }
         }
+        
+        if (LOG.isDebugEnabled()) {
+            LOG.debug("LwM2M request is asynchronous (will complete later) - Endpoint: {}, Path: {}, Timeout: {} ms", 
+                    destination.getEndpoint(), path, timeout);
+        }
 
         // else response will be receive later (probably because request was delayed as device is not awake)
         final String requestId = UUID.randomUUID().toString();
+        final String endpoint = destination.getEndpoint();
+        final String requestPath = path;
+        final boolean logDebug = LOG.isDebugEnabled();
         future.thenApply(lwm2mResp -> {
             try {
+                if (logDebug) {
+                    LOG.debug("LwM2M asynchronous response received - Endpoint: {}, Path: {}, RequestId: {}, Success: {}", 
+                            endpoint, requestPath, requestId, lwm2mResp != null && lwm2mResp.isSuccess());
+                }
                 // when response will be received, send a event with the response
                 ResponseDelayed responseDelayed = new ResponseDelayed();
-                responseDelayed.ep = destination.getEndpoint();
+                responseDelayed.ep = endpoint;
                 if (lwm2mReq instanceof SimpleDownlinkRequest) {
                     responseDelayed.path = ((SimpleDownlinkRequest<?>) lwm2mReq).getPath().toString();
                 }
@@ -716,11 +763,19 @@ public class ClientServlet extends LeshanDemoServlet {
                 responseDelayed.requestId = requestId;
                 responseDelayed.delayed = true;
                 eventServlet.sendEvent("REQUEST_RESPONSE", this.mapper.writeValueAsString(responseDelayed),
-                        destination.getEndpoint());
+                        endpoint);
             } catch (JsonProcessingException e) {
+                LOG.error("Error serializing delayed response - Endpoint: {}, Path: {}, RequestId: {}", 
+                        endpoint, requestPath, requestId, e);
                 throw new IllegalStateException(e);
             }
             return lwm2mResp;
+        });
+        
+        future.exceptionally(throwable -> {
+            LOG.error("LwM2M asynchronous request failed - Endpoint: {}, Path: {}, RequestId: {}, Error: {}", 
+                    endpoint, requestPath, requestId, throwable != null ? throwable.getMessage() : "Unknown error", throwable);
+            return null;
         });
 
         // answer that request is delayed
@@ -749,11 +804,34 @@ public class ClientServlet extends LeshanDemoServlet {
 
     private void processDeviceResponse(HttpServletRequest httpReq, HttpServletResponse httpResp,
             LwM2mResponse lwm2mResp) throws IOException {
+        processDeviceResponse(httpReq, httpResp, lwm2mResp, extractTimeout(httpReq));
+    }
+
+    private void processDeviceResponse(HttpServletRequest httpReq, HttpServletResponse httpResp,
+            LwM2mResponse lwm2mResp, long timeout) throws IOException {
         if (lwm2mResp == null) {
-            LOG.warn("Request {}{} timed out.", httpReq.getServletPath(), httpReq.getPathInfo());
+            String path = httpReq.getPathInfo();
+            String method = httpReq.getMethod();
+            LOG.warn("Request timed out - Method: {}, Path: {}, Timeout: {} ms ({} seconds). " +
+                    "This may indicate the operation took longer than the configured timeout.", 
+                    method, path, timeout, timeout / 1000);
             httpResp.setStatus(HttpServletResponse.SC_GATEWAY_TIMEOUT);
             httpResp.getWriter().append("Request timeout").flush();
         } else {
+            // Only log success in debug mode to avoid performance impact
+            if (LOG.isDebugEnabled()) {
+                String path = httpReq.getPathInfo();
+                String method = httpReq.getMethod();
+                LOG.debug("Request completed successfully - Method: {}, Path: {}, ResponseCode: {}, Success: {}", 
+                        method, path, lwm2mResp.getCode(), lwm2mResp.isSuccess());
+            }
+            // Always log errors/warnings
+            if (!lwm2mResp.isSuccess()) {
+                String path = httpReq.getPathInfo();
+                String method = httpReq.getMethod();
+                LOG.warn("Request completed with error - Method: {}, Path: {}, ResponseCode: {}, ErrorMessage: {}", 
+                        method, path, lwm2mResp.getCode(), lwm2mResp.getErrorMessage());
+            }
             String response = this.mapper.writeValueAsString(lwm2mResp);
             httpResp.setContentType(APPLICATION_JSON);
             httpResp.getOutputStream().write(response.getBytes());
@@ -791,12 +869,31 @@ public class ClientServlet extends LeshanDemoServlet {
         if (timeoutParam != null) {
             try {
                 timeout = Long.parseLong(timeoutParam) * 1000;
+                if (LOG.isDebugEnabled()) {
+                    LOG.debug("Using timeout from request parameter: {} ms ({} seconds)", timeout, timeout / 1000);
+                }
             } catch (NumberFormatException e) {
-                timeout = DEFAULT_TIMEOUT;
+                LOG.warn("Invalid timeout parameter '{}', using default timeout", timeoutParam);
+                timeout = getDefaultTimeoutForRequest(req);
             }
         } else {
-            timeout = DEFAULT_TIMEOUT;
+            timeout = getDefaultTimeoutForRequest(req);
         }
         return timeout;
+    }
+
+    private long getDefaultTimeoutForRequest(HttpServletRequest req) {
+        // Check if this is a write request to firmware object (object 5)
+        String pathInfo = req.getPathInfo();
+        if (pathInfo != null && "PUT".equals(req.getMethod())) {
+            // Check if path contains /5/ or ends with /5 which indicates firmware object
+            // Path format: /clients/{endpoint}/5/0/0 or /5/0/0
+            if (pathInfo.contains("/5/") || pathInfo.endsWith("/5")) {
+                LOG.info("Firmware update detected for path {} - using extended timeout of {} ms ({} minutes)", 
+                        pathInfo, FIRMWARE_WRITE_TIMEOUT, FIRMWARE_WRITE_TIMEOUT / 60000);
+                return FIRMWARE_WRITE_TIMEOUT;
+            }
+        }
+        return DEFAULT_TIMEOUT;
     }
 }
